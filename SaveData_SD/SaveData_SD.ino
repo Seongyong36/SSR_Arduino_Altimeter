@@ -40,7 +40,7 @@ void setup() {
   Serial.print("Initializing SD card...");
   // Serial.print(chipSelect);
   
-  for (s)
+  // for (s)
   
   if (!SD.begin(28)) {
     Serial.println("initialization failed!");
