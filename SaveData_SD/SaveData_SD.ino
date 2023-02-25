@@ -2,45 +2,40 @@
 #include <SPI.h>
 #include <SD.h> // library to write and read to SD card
 #include <Arduino_MKRENV.h> // library to use the MKR ENV shield
-
-float launchPadElevation; // Elevation of the launch pad (in m). Rocket's altitude is measured relative to this elevation.
-bool launchOccurred = false; // False until a launch is detected.
+#include "ArduinoLowPower.h" // library to use Low Power modes 
 
 // initialize variables to store measurements
 float time;
 float startTime;
-float temperature;
-float humidity;
 float pressure;
 float currentElevation;
 float altitude; 
-float illuminance;
-float uva;
-float uvb;
-float uvIndex;
+float voltage;  // voltage of battery (in volts)
 
-// altimeter settings DO NOT EDIT THESE UNLESS YOU KNOW EXACTLY WHAT YOU ARE DOING!
+// altimeter parameters DO NOT EDIT THESE UNLESS YOU KNOW EXACTLY WHAT YOU ARE DOING!
 File myFile;
 String fileNameHeader = "Launch_"; // All launch data files will start with the words "Launch_..."
 String fileType = ".csv"; // Launch data files will be written in .csv files
 String fileName = "";
-String dataFileHeader = "Time (s), Altitude (m), Pressure (kPa), Temperature (C)"; // First row of launch data file
+String dataFileHeader = "Time (s), Altitude (m), Pressure (kPa), Temperature (C), Voltage (V)"; // First row of launch data file
 const int chipSelect = 4; //SDCARD_SS_PIN;
 bool write2SDCard = true; // Will write to SD card if true.
-float triggerAltitude = 1.00; // Arduino will only start recording once it crosses this altitude threshold (this is in meters).
-int padSetUpTime = 4000; // Length of time between sensor set up and launch pad elevation calibration (in ms) -- nominal value: 60000 (1 min)
+float triggerAltitude = 3.00; // Arduino will only start recording once it crosses this altitude threshold (this is in meters).
+float launchPadElevation = -1; // Elevation of the launch pad (in m). Rocket's altitude is measured relative to this elevation.
+bool launchDetected = false; // False until a launch is detected. 
+bool launchEnded = false; // False until the end of the launch is detected.
+int padSetUpTime = 60000; // Length of time between sensor set up and launch pad elevation calibration (in ms) -- nominal value: 60000 (1 min)
 int samplingInterval = 1; // time between readings (in ms) -- nominal value: 1
-int sampleNumber = 10; // number of readings to average -- nominal value: 10
+int sampleNumber = 15; // number of readings to average -- nominal value: ?? 
 int padElevationSamplingInterval = 1000; // time between averaged readings to determine pad elevation (in ms) -- nominal value: 1000
-int padElevationSampleNumber = 4; // number of averaged readings to determine pad elevation -- nominal value: 25
-
+int padElevationSampleNumber = 25; // number of averaged readings to determine pad elevation -- nominal value: 25
+float batteryMaxVoltage = 4.30; // Voltage of a fully charged battery -- nominal value 4.30  
+int deepSleepDuration = 10000; // Go to deep sleep after launch 
+ 
 void setup() {
 
   // Open serial communications and wait for port to open:
   Serial.begin(9600);
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB port only
-  }
   
   // Check if the ENV shield is responsive 
   if (!ENV.begin()) {
@@ -69,7 +64,6 @@ void setup() {
       File file = SD.open(fileName);
       int fileOutput = file.read();
       file.close();
-      Serial.println(fileOutput);
       if (fileOutput == -1){
         break;
       }     
@@ -82,7 +76,7 @@ void setup() {
     myFile = SD.open(fileName, FILE_WRITE);
     if (!myFile) {
       // if the file didn't open, print an error:
-      Serial.println("error opening test.txt");
+      Serial.println("error opening " + fileName);
     }
   }
 
@@ -102,29 +96,23 @@ void setup() {
 }
 
 void loop() {
-  
-  // measure time
-  time = -1; // default value of time 
-  if (launchOccurred){
-    time = (millis() - startTime)/1000;
-  } 
 
-  // Obtain measurements from sensor
-  getMeasurements(samplingInterval, sampleNumber); // obtains pressure and temperature measurements 
-  
+  // Obtain measurements 
+  getMeasurements(samplingInterval, sampleNumber); // obtains time and pressure measurements 
+
   currentElevation = getAltitude(pressure); // calculates elevation (in m) relative to sea level based on pressure reading
   altitude = currentElevation - launchPadElevation; // calculates elevation (in m) relative to launch pad
-  String dataString = "";
-  dataString = dataString + String(time) + ", " + String(altitude) + ", " + String(pressure) + ", " + String(temperature);
+  String dataString = "Measurements: ";
+  dataString = dataString + String(time) + " s, " + String(altitude) + " m, " + String(pressure) + " kPa" + String(voltage) + " V";
   Serial.println(dataString);
   
   // Run if launch has not been detected
-  if (!launchOccurred){
+  if (!launchDetected){
 
     // Check if the trigger altitude has been crossed. This block of code ends up only running once.  
-    if (currentElevation - launchPadElevation > triggerAltitude){
+    if (altitude > triggerAltitude) {
       Serial.println("Launch detected!");
-      launchOccurred = true; 
+      launchDetected = true; 
       startTime = millis(); // measures how long the arduino has been on before launch 
       // Write the file headers
       myFile = SD.open(fileName, FILE_WRITE);
@@ -133,9 +121,14 @@ void loop() {
     }
   } 
   
-  // Runs if launch has been detected
-  else { 
-    Serial.println(launchOccurred);
+  // Runs if launch has been detected and has not ended.
+  else if (!launchEnded) { 
+    
+    // Check that the rocket is still in flight 
+    if (altitude < triggerAltitude){
+      launchEnded = true;
+    }
+
     Serial.println("Altimeter is in flight");
     if (write2SDCard) {
       // Start writing to SD Card
@@ -144,6 +137,14 @@ void loop() {
       myFile.println(dataString);
       myFile.close();
     }
+  }
+  
+  // run if launch has been detected but it has ended
+  else {
+    Serial.println("Post launch!");
+
+    // Go to deep sleep to conserve battery until the rocket is retrieved.
+    LowPower.deepSleep(deepSleepDuration);
   }
 }
 
@@ -155,21 +156,36 @@ void blink(int onTime, int offTime, int repeat) {
     delay(offTime);                     // wait
   }
 }
-void getMeasurements(int samplingInterval, int sampleNumber){
+float getBatteryVoltage() {
   /*
-  Function to return averaged values of sensor readings (raw sensor readings show too much noise)
+  Function to read voltage of the external Lipo Battery
+  */
+  int sensorValue = analogRead(ADC_BATTERY); // read the input on analog pin 0:
+  // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 4.3V):
+  voltage = sensorValue * (batteryMaxVoltage / 1023.0);
+}
+void getMeasurements(int samplingInterval, int sampleNumber) {
+  /*
+  Function to return averaged values of sensor readings (raw sensor readings show too much noise) AND time
   */
   float pressure_avg = 0;
   float temp_avg = 0;
+  int time1 = millis(); // time at the beginning of measurement
   for (int i = 0; i < sampleNumber; i++){ 
     float pressureReading = ENV.readPressure(KILOPASCAL); // return pressure reading in kilopascals
-    float tempReading = ENV.readTemperature(CELSIUS); // return temperature reading in Celsius
+    // float tempReading = ENV.readTemperature(CELSIUS); // return temperature reading in Celsius
     pressure_avg += pressureReading;
-    temp_avg += tempReading;     
+    // temp_avg += tempReading;     
     delay(samplingInterval); 
   }
+  int time2 = millis(); // time at the end of measurement
+  int time_avg = (time1 + time2)/2;
+  time = (time_avg - startTime)/1000;
+  if (!launchDetected){
+    time = -1;    
+  } 
   pressure = pressure_avg / sampleNumber;
-  temperature = temp_avg / sampleNumber;
+  getBatteryVoltage();
 } 
 
 float getAltitude(float pressure){
@@ -186,7 +202,6 @@ float getPadElevation(int padElevationSamplingInterval, int padElevationSampleNu
   Averages multiple pressure readings and reports the corresponding elevation (in meters).
   */
   float pressure_avg = 0;
-  float temp_avg = 0;
   for (int i = 0; i < padElevationSampleNumber; i++){ 
     getMeasurements(samplingInterval, sampleNumber);
     pressure_avg += pressure;
