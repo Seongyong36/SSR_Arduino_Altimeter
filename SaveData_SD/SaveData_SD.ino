@@ -21,14 +21,17 @@ float uvIndex;
 
 // altimeter settings DO NOT EDIT THESE UNLESS YOU KNOW EXACTLY WHAT YOU ARE DOING!
 File myFile;
-const char filename[] = "Launch.csv";
+String fileNameHeader = "Launch_"; // All launch data files will start with the words "Launch_..."
+String fileType = ".csv"; // Launch data files will be written in .csv files
+String fileName = "";
+String dataFileHeader = "Time (s), Altitude (m), Pressure (kPa), Temperature (C)"; // First row of launch data file
 const int chipSelect = 4; //SDCARD_SS_PIN;
 bool write2SDCard = true; // Will write to SD card if true.
 float triggerAltitude = 1.00; // Arduino will only start recording once it crosses this altitude threshold (this is in meters).
 int padSetUpTime = 4000; // Length of time between sensor set up and launch pad elevation calibration (in ms) -- nominal value: 60000 (1 min)
-int samplingInterval = 5; // time between readings (in ms) -- nominal value: 5
-int sampleNumber = 50; // number of readings to average -- nominal value: 50
-int padElevationSamplingInterval = 500; // time between averaged readings to determine pad elevation (in ms) -- nominal value: 500
+int samplingInterval = 1; // time between readings (in ms) -- nominal value: 1
+int sampleNumber = 10; // number of readings to average -- nominal value: 10
+int padElevationSamplingInterval = 1000; // time between averaged readings to determine pad elevation (in ms) -- nominal value: 1000
 int padElevationSampleNumber = 4; // number of averaged readings to determine pad elevation -- nominal value: 25
 
 void setup() {
@@ -56,23 +59,28 @@ void setup() {
       // don't do anything more:
       while (1);
     }
-
     Serial.println("initialization done.");
 
-    // delete the old version of the file
-    // SD.remove("test.csv");
+    // Find a file name that is not taken already. Use while loop to increment launch number.
+    int launchNumber = 1;    
+    fileName = fileNameHeader + String(launchNumber) + fileType;
+    while (SD.exists(fileName)) {
+      // Check if this file contains launch data, if not, stop incrementing the launch number.
+      File file = SD.open(fileName);
+      int fileOutput = file.read();
+      file.close();
+      Serial.println(fileOutput);
+      if (fileOutput == -1){
+        break;
+      }     
+      launchNumber++;
+      fileName = fileNameHeader + String(launchNumber) + fileType;
+      Serial.println(fileName); 
+    }
 
-    // open the file. 
-    // note that only one file can be open at a time, so you have to close this one before opening another.
-    myFile = SD.open(filename, FILE_WRITE);
-
-    // if the file opened okay, write to it:
-    if (myFile) {
-      Serial.print("Writing to file...");
-      myFile.println("Time (s), Altitude (m), Pressure (kPa), Temperature (C)");
-      myFile.close(); // close the file
-      Serial.println("done.");
-    } else {
+    // Open that file. If the file opened okay, write to it:
+    myFile = SD.open(fileName, FILE_WRITE);
+    if (!myFile) {
       // if the file didn't open, print an error:
       Serial.println("error opening test.txt");
     }
@@ -101,34 +109,38 @@ void loop() {
     time = (millis() - startTime)/1000;
   } 
 
-  // Obtain measurements from sensor 
+  // Obtain measurements from sensor
   getMeasurements(samplingInterval, sampleNumber); // obtains pressure and temperature measurements 
+  
   currentElevation = getAltitude(pressure); // calculates elevation (in m) relative to sea level based on pressure reading
   altitude = currentElevation - launchPadElevation; // calculates elevation (in m) relative to launch pad
   String dataString = "";
   dataString = dataString + String(time) + ", " + String(altitude) + ", " + String(pressure) + ", " + String(temperature);
   Serial.println(dataString);
   
-  // Runs if launch has not been detected
+  // Run if launch has not been detected
   if (!launchOccurred){
 
-    // Check if the trigger altitude has been crossed. If so, consider the rocket launched. 
-    if (currentElevation - launchPadElevation > triggerAltitude) {
+    // Check if the trigger altitude has been crossed. This block of code ends up only running once.  
+    if (currentElevation - launchPadElevation > triggerAltitude){
+      Serial.println("Launch detected!");
       launchOccurred = true; 
       startTime = millis(); // measures how long the arduino has been on before launch 
-      Serial.println("Launch detected!");
-    } 
-
+      // Write the file headers
+      myFile = SD.open(fileName, FILE_WRITE);
+      myFile.println(dataFileHeader);
+      myFile.close();
+    }
   } 
   
   // Runs if launch has been detected
   else { 
-
+    Serial.println(launchOccurred);
     Serial.println("Altimeter is in flight");
     if (write2SDCard) {
       // Start writing to SD Card
       Serial.println("writing to SD card"); 
-      myFile = SD.open(filename, FILE_WRITE);
+      myFile = SD.open(fileName, FILE_WRITE);
       myFile.println(dataString);
       myFile.close();
     }
@@ -148,12 +160,16 @@ void getMeasurements(int samplingInterval, int sampleNumber){
   Function to return averaged values of sensor readings (raw sensor readings show too much noise)
   */
   float pressure_avg = 0;
+  float temp_avg = 0;
   for (int i = 0; i < sampleNumber; i++){ 
     float pressureReading = ENV.readPressure(KILOPASCAL); // return pressure reading in kilopascals
+    float tempReading = ENV.readTemperature(CELSIUS); // return temperature reading in Celsius
     pressure_avg += pressureReading;
-    delay(samplingInterval);    
+    temp_avg += tempReading;     
+    delay(samplingInterval); 
   }
   pressure = pressure_avg / sampleNumber;
+  temperature = temp_avg / sampleNumber;
 } 
 
 float getAltitude(float pressure){
@@ -170,9 +186,11 @@ float getPadElevation(int padElevationSamplingInterval, int padElevationSampleNu
   Averages multiple pressure readings and reports the corresponding elevation (in meters).
   */
   float pressure_avg = 0;
+  float temp_avg = 0;
   for (int i = 0; i < padElevationSampleNumber; i++){ 
     getMeasurements(samplingInterval, sampleNumber);
     pressure_avg += pressure;
+
     delay(padElevationSamplingInterval);    
   }
   pressure_avg = pressure_avg / padElevationSampleNumber;
