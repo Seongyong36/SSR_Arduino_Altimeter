@@ -1,4 +1,4 @@
-// Import necessary libraries 
+// Import necessary libraries to be used in this sketch. These libraries must be downloaded already.
 #include <SPI.h>
 #include <SD.h> // library to write and read to SD card
 #include <Arduino_MKRENV.h> // library to use the MKR ENV shield
@@ -93,6 +93,9 @@ void setup() {
   String messageHeader = "Pad Elevation (m) is: ";
   String elevationMessage = messageHeader + launchPadElevation;
   Serial.println(elevationMessage); // for debugging only
+
+  int time_array[] = {0,49,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0};
+  Serial.println(time_array[1]);
 }
 
 void loop() {
