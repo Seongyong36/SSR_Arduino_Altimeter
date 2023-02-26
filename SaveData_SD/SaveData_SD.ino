@@ -17,16 +17,16 @@ File myFile;
 String fileNameHeader = "Launch_"; // All launch data files will start with the words "Launch_..."
 String fileType = ".csv"; // Launch data files will be written in .csv files
 String fileName = "";
-String dataFileHeader = "Time (s), Altitude (m), Pressure (kPa), Temperature (C), Voltage (V)"; // First row of launch data file
+String dataFileHeader = "Time (s), Altitude (ft), Pressure (kPa), Voltage (V)"; // First row of launch data file
 const int chipSelect = 4; //SDCARD_SS_PIN;
 bool write2SDCard = true; // Will write to SD card if true.
-float triggerAltitude = 3.00; // Arduino will only start recording once it crosses this altitude threshold (this is in meters).
+float triggerAltitude = 6.0; // Arduino will only start recording once it crosses this altitude threshold (in ft) -- nominal value: 6
 float launchPadElevation = -1; // Elevation of the launch pad (in m). Rocket's altitude is measured relative to this elevation.
 bool launchDetected = false; // False until a launch is detected. 
 bool launchEnded = false; // False until the end of the launch is detected.
 int padSetUpTime = 60000; // Length of time between sensor set up and launch pad elevation calibration (in ms) -- nominal value: 60000 (1 min)
 int samplingInterval = 1; // time between readings (in ms) -- nominal value: 1
-int sampleNumber = 15; // number of readings to average -- nominal value: ?? 
+int sampleNumber = 15; // number of readings to average -- nominal value: 15 
 int padElevationSamplingInterval = 1000; // time between averaged readings to determine pad elevation (in ms) -- nominal value: 1000
 int padElevationSampleNumber = 25; // number of averaged readings to determine pad elevation -- nominal value: 25
 float batteryMaxVoltage = 4.30; // Voltage of a fully charged battery -- nominal value 4.30  
@@ -100,10 +100,10 @@ void loop() {
   // Obtain measurements 
   getMeasurements(samplingInterval, sampleNumber); // obtains time and pressure measurements 
 
-  currentElevation = getAltitude(pressure); // calculates elevation (in m) relative to sea level based on pressure reading
-  altitude = currentElevation - launchPadElevation; // calculates elevation (in m) relative to launch pad
-  String dataString = "Measurements: ";
-  dataString = dataString + String(time) + " s, " + String(altitude) + " m, " + String(pressure) + " kPa" + String(voltage) + " V";
+  currentElevation = getAltitude(pressure); // calculates elevation relative to sea level based on pressure reading
+  altitude = currentElevation - launchPadElevation; // calculates elevation relative to launch pad
+  String dataString = "";
+  dataString = dataString + String(time) + "," + String(altitude) + "," + String(pressure) + "," + String(voltage);
   Serial.println(dataString);
   
   // Run if launch has not been detected
