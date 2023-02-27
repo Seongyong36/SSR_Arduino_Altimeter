@@ -5,16 +5,20 @@
 #include "ArduinoLowPower.h" // library to use Low Power modes 
 
 // initialize variables to store measurements
-float time;
+float time; // time since beginning of launch (in seconds)
+float timeStamp; // time since arduino turns on (in seconds)
 float startTime;
 float pressure;
 float currentElevation;
 float altitude; 
 float voltage;  // voltage of battery (in volts)
+int arrayLength = 25;
+float timeStampArray[25]; // used to store the last 25 time stamps (different from time!) in seconds
+float pressureArray[25]; // used to store the last 25 pressure readings
 
 // altimeter parameters DO NOT EDIT THESE UNLESS YOU KNOW EXACTLY WHAT YOU ARE DOING!
 File myFile;
-String fileNameHeader = "Launch_"; // All launch data files will start with the words "Launch_..."
+String fileNameHeader = "File_"; // All launch data files will start with theses words. KEEP THE HEADER SHORT! There is a limit to overall file name length.
 String fileType = ".csv"; // Launch data files will be written in .csv files
 String fileName = "";
 String dataFileHeader = "Time (s), Altitude (ft), Pressure (kPa), Voltage (V)"; // First row of launch data file
@@ -24,11 +28,9 @@ float triggerAltitude = 6.0; // Arduino will only start recording once it crosse
 float launchPadElevation = -1; // Elevation of the launch pad (in m). Rocket's altitude is measured relative to this elevation.
 bool launchDetected = false; // False until a launch is detected. 
 bool launchEnded = false; // False until the end of the launch is detected.
-int padSetUpTime = 60000; // Length of time between sensor set up and launch pad elevation calibration (in ms) -- nominal value: 60000 (1 min)
-int samplingInterval = 1; // time between readings (in ms) -- nominal value: 1
-int sampleNumber = 15; // number of readings to average -- nominal value: 15 
-int padElevationSamplingInterval = 1000; // time between averaged readings to determine pad elevation (in ms) -- nominal value: 1000
-int padElevationSampleNumber = 25; // number of averaged readings to determine pad elevation -- nominal value: 25
+const int padSetUpTime = 60000; // Length of time between sensor set up and launch pad elevation calibration (in ms) -- nominal value: 60000 (1 min)
+const int padElevationSampleNumber = 25; // number of averaged readings to determine pad elevation -- nominal value: 25
+int arrayPointer = 0; // cycles between 0 and arrayLength
 float batteryMaxVoltage = 4.30; // Voltage of a fully charged battery -- nominal value 4.30  
 int deepSleepDuration = 10000; // Go to deep sleep after launch 
  
@@ -69,7 +71,6 @@ void setup() {
       }     
       launchNumber++;
       fileName = fileNameHeader + String(launchNumber) + fileType;
-      Serial.println(fileName); 
     }
 
     // Open that file. If the file opened okay, write to it:
@@ -79,7 +80,7 @@ void setup() {
       Serial.println("error opening " + fileName);
     }
   }
-
+  
   // Blink the indicator LED to give visual indication that all checks have been passed. 
   // While the LED is still blinking, the students should put the altimeter inside the rocket
   int onTime = 1000; // time the LED is on (in ms)
@@ -88,22 +89,37 @@ void setup() {
   blink(onTime, offTime, repeat);
 
   // At this point the altimeter sits inside the rocket on the pad.
-  // Calculate elevation of launchPad by averaging the pressure readings taken in the next x seconds
-  launchPadElevation = getPadElevation(padElevationSamplingInterval, padElevationSampleNumber);
-  String messageHeader = "Pad Elevation (m) is: ";
+  // Calculate elevation of launch pad by averaging the pressure readings taken.
+  float pressure_sum = 0;
+  for (int i = 0; i < padElevationSampleNumber; i++) {
+    // Take measurements and store them in the time and pressure arrays
+    for (int j = 0; j < arrayLength; j++) {
+      timeStampArray[j] = millis() / 1000.0; // convert to seconds
+      pressureArray[j] = ENV.readPressure(KILOPASCAL);
+    }
+
+    // take the average of this array 
+    pressure = average(pressureArray);
+    pressure_sum += pressure;
+  }
+
+  // Determine launch pad elevation from the averaged pressure 
+  float pressureAtPad = pressure_sum / padElevationSampleNumber;
+  launchPadElevation = calculateAltitude(pressureAtPad);
+
+  // Print out pad elevation to Serial monitor
+  String messageHeader = "Pad Elevation (ft) is: ";
   String elevationMessage = messageHeader + launchPadElevation;
   Serial.println(elevationMessage); // for debugging only
-
-  int time_array[] = {0,49,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0};
-  Serial.println(time_array[1]);
+  delay(500);
+  Serial.println(fileName);
+  delay(500);
 }
 
 void loop() {
-
   // Obtain measurements 
-  getMeasurements(samplingInterval, sampleNumber); // obtains time and pressure measurements 
-
-  currentElevation = getAltitude(pressure); // calculates elevation relative to sea level based on pressure reading
+  getMeasurements(); // obtains time and pressure measurements 
+  currentElevation = calculateAltitude(pressure); // calculates elevation relative to sea level based on pressure reading
   altitude = currentElevation - launchPadElevation; // calculates elevation relative to launch pad
   String dataString = "";
   dataString = dataString + String(time) + "," + String(altitude) + "," + String(pressure) + "," + String(voltage);
@@ -116,7 +132,7 @@ void loop() {
     if (altitude > triggerAltitude) {
       Serial.println("Launch detected!");
       launchDetected = true; 
-      startTime = millis(); // measures how long the arduino has been on before launch 
+      startTime = timeStamp; // set startTime to current timeStamp
       // Write the file headers
       myFile = SD.open(fileName, FILE_WRITE);
       myFile.println(dataFileHeader);
@@ -151,6 +167,16 @@ void loop() {
   }
 }
 
+float average(float array[]) {
+  /*
+  Returns the average of an array of floats
+  */
+  float arraySum = 0;
+  for (int i = 0; i < arrayLength; i++) {
+    arraySum += array[i];
+  }
+  return arraySum/arrayLength;
+}
 void blink(int onTime, int offTime, int repeat) {
   for (int i = 0; i < repeat; i++) {
     digitalWrite(LED_BUILTIN, HIGH);  // turn the LED on (HIGH is the voltage level)
@@ -167,50 +193,28 @@ float getBatteryVoltage() {
   // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 4.3V):
   voltage = sensorValue * (batteryMaxVoltage / 1023.0);
 }
-void getMeasurements(int samplingInterval, int sampleNumber) {
+void getMeasurements() {
   /*
   Function to return averaged values of sensor readings (raw sensor readings show too much noise) AND time
   */
-  float pressure_avg = 0;
-  float temp_avg = 0;
-  int time1 = millis(); // time at the beginning of measurement
-  for (int i = 0; i < sampleNumber; i++){ 
-    float pressureReading = ENV.readPressure(KILOPASCAL); // return pressure reading in kilopascals
-    // float tempReading = ENV.readTemperature(CELSIUS); // return temperature reading in Celsius
-    pressure_avg += pressureReading;
-    // temp_avg += tempReading;     
-    delay(samplingInterval); 
+  // Update array with newest measurements 
+  timeStampArray[arrayPointer] = millis() / 1000.0 ;
+  pressureArray[arrayPointer] = ENV.readPressure(KILOPASCAL);
+  arrayPointer = (arrayPointer + 1) % arrayLength;
+
+  // calculate average values in time and pressure array
+  timeStamp = average(timeStampArray);
+  pressure = average(pressureArray);
+  time = timeStamp - startTime;
+  if (!launchDetected) {
+    time = -1.0;
   }
-  int time2 = millis(); // time at the end of measurement
-  int time_avg = (time1 + time2)/2;
-  time = (time_avg - startTime)/1000;
-  if (!launchDetected){
-    time = -1;    
-  } 
-  pressure = pressure_avg / sampleNumber;
-  getBatteryVoltage();
 } 
 
-float getAltitude(float pressure){
+float calculateAltitude(float pressure){
   /*
   Function for converting pressure readings into elevation. 
-  Returns elevation in meters.
+  Returns elevation in feet.
   */
   return 145366.45*(1-pow(pressure*10/1013.25,(0.190284)));
-}
-
-float getPadElevation(int padElevationSamplingInterval, int padElevationSampleNumber){
-  /*
-  Function for obtaining launch pad elevation. 
-  Averages multiple pressure readings and reports the corresponding elevation (in meters).
-  */
-  float pressure_avg = 0;
-  for (int i = 0; i < padElevationSampleNumber; i++){ 
-    getMeasurements(samplingInterval, sampleNumber);
-    pressure_avg += pressure;
-
-    delay(padElevationSamplingInterval);    
-  }
-  pressure_avg = pressure_avg / padElevationSampleNumber;
-  return getAltitude(pressure_avg);  
 }
