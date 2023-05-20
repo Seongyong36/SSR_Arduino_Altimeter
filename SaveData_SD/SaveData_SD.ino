@@ -21,10 +21,10 @@ File myFile;
 String fileNameHeader = "File_"; // All launch data files will start with theses words. KEEP THE HEADER SHORT! There is a limit to overall file name length.
 String fileType = ".csv"; // Launch data files will be written in .csv files
 String fileName = "";
-String dataFileHeader = "Time (s), Altitude (ft), Pressure (kPa), Voltage (V)"; // First row of launch data file
+String dataFileHeader = "Time (s), Altitude (m), Pressure (kPa), Voltage (V)"; // First row of launch data file
 const int chipSelect = 4; //SDCARD_SS_PIN;
 bool write2SDCard = true; // Will write to SD card if true.
-float triggerAltitude = 6.0; // Arduino will only start recording once it crosses this altitude threshold (in ft) -- nominal value: 6
+float triggerAltitude = 1.8; // Arduino will only start recording once it crosses this altitude threshold (in m) -- nominal value: 6
 float launchPadElevation = -1; // Elevation of the launch pad (in m). Rocket's altitude is measured relative to this elevation.
 bool launchDetected = false; // False until a launch is detected. 
 bool launchEnded = false; // False until the end of the launch is detected.
@@ -87,7 +87,7 @@ void setup() {
   int offTime = 1000; // time the LED is off (in ms)
   int repeat = padSetUpTime / (onTime + offTime); // number of times the LED should blink
   blink(onTime, offTime, repeat);
-
+  
   // At this point the altimeter sits inside the rocket on the pad.
   // Calculate elevation of launch pad by averaging the pressure readings taken.
   float pressure_sum = 0;
@@ -214,7 +214,7 @@ void getMeasurements() {
 float calculateAltitude(float pressure){
   /*
   Function for converting pressure readings into elevation. 
-  Returns elevation in feet.
+  Returns elevation in meters.
   */
-  return 145366.45*(1-pow(pressure*10/1013.25,(0.190284)));
+  return 145366.45*(1-pow(pressure*10/1013.25,(0.190284)))*0.3048;
 }
